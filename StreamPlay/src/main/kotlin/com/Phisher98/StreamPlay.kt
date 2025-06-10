@@ -257,15 +257,77 @@ open class StreamPlay(val sharedPref: SharedPreferences? = null) : TmdbProvider(
         if (link == null) return null
         return if (link.startsWith("/")) "https://image.tmdb.org/t/p/original/$link" else link
     }
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val adultQuery =
-            if (settingsForProvider.enableAdult) "" else "&without_keywords=190370|13059|226161|195669"
-        val type = if (request.data.contains("/movie")) "movie" else "tv"
-        val home = app.get("${request.data}$adultQuery&page=$page")
-            .parsedSafe<Results>()?.results?.mapNotNull { media ->
-                media.toSearchResponse(type)
-            } ?: throw ErrorLoadingException("Invalid Json reponse")
-        return newHomePageResponse(request.name, home)
+        override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        return when (request.data) {
+            "trakt-trending" -> {
+                val trakt = TraktV2("d5f4875957bb75a1af4f4e1381f11ed2c35b733ef63febc813575c26c7371ef6")
+                val shows = trakt.shows().trending(page, 20, Extended.FULL).execute().body() ?: emptyList()
+                val movies = trakt.movies().trending(page, 20, Extended.FULL).execute().body() ?: emptyList()
+                
+                val items = buildList {
+                    addAll(shows.map { show ->
+                        newTvSeriesSearchResponse(
+                            show.show.title ?: "",
+                            show.show.ids.trakt.toString(),
+                            TvType.TvSeries
+                        ) {
+                            this.posterUrl = show.show.images?.poster?.full
+                            this.year = show.show.year
+                        }
+                    })
+                    addAll(movies.map { movie ->
+                        newMovieSearchResponse(
+                            movie.movie.title ?: "",
+                            movie.movie.ids.trakt.toString(),
+                            TvType.Movie
+                        ) {
+                            this.posterUrl = movie.movie.images?.poster?.full
+                            this.year = movie.movie.year
+                        }
+                    })
+                }
+                newHomePageResponse(request.name, items)
+            }
+            "trakt-popular" -> {
+                val trakt = TraktV2("d5f4875957bb75a1af4f4e1381f11ed2c35b733ef63febc813575c26c7371ef6")
+                val shows = trakt.shows().popular(page, 20, Extended.FULL).execute().body() ?: emptyList()
+                val movies = trakt.movies().popular(page, 20, Extended.FULL).execute().body() ?: emptyList()
+                
+                val items = buildList {
+                    addAll(shows.map { show ->
+                        newTvSeriesSearchResponse(
+                            show.title ?: "",
+                            show.ids.trakt.toString(),
+                            TvType.TvSeries
+                        ) {
+                            this.posterUrl = show.images?.poster?.full
+                            this.year = show.year
+                        }
+                    })
+                    addAll(movies.map { movie ->
+                        newMovieSearchResponse(
+                            movie.title ?: "",
+                            movie.ids.trakt.toString(),
+                            TvType.Movie
+                        ) {
+                            this.posterUrl = movie.images?.poster?.full
+                            this.year = movie.year
+                        }
+                    })
+                }
+                newHomePageResponse(request.name, items)
+            }
+            else -> {
+                val adultQuery = if (settingsForProvider.enableAdult) "" else "&without_keywords=190370|13059|226161|195669"
+                val type = if (request.data.contains("/movie")) "movie" else "tv"
+                val home = app.get("${request.data}$adultQuery&page=$page")
+                    .parsedSafe<Results>()?.results?.mapNotNull { media ->
+                        media.toSearchResponse(type)
+                    } ?: throw ErrorLoadingException("Invalid Json reponse")
+                newHomePageResponse(request.name, home)
+            }
+        }
+    }
     }
 
     private fun Media.toSearchResponse(type: String? = null): SearchResponse? {
